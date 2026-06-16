@@ -1,36 +1,36 @@
-# Hand Three.js Studio
+# Mobin Hand 3D Studio Pro
 
-یک پروژه آماده برای ساخت و کنترل اجسام سه‌بعدی با وب‌کم لپ‌تاپ، Three.js و MediaPipe Hand Landmarker.
+پروژه Three.js + Webcam + MediaPipe Hand Landmarker برای ساخت و کنترل اجسام سه‌بعدی با دست.
 
-## اجرا
+## اجرا روی سیستم
 
 ```bash
 npm install
 npm run dev
 ```
 
-بعد آدرس localhost که Vite می‌دهد را باز کن و اجازه دسترسی به دوربین بده.
+بعد آدرس `http://localhost:5173` را باز کن و دسترسی دوربین را Allow کن.
+
+## دیپلوی روی Netlify
+
+Netlify خودش با فایل `netlify.toml` تنظیم شده:
+
+- Build command: `npm run build`
+- Publish directory: `dist`
+- Node version: `20.11.1`
 
 ## کنترل‌ها
 
-- 🤏 پینچ با شست و اشاره: ساختن جسم جدید یا گرفتن جسم نزدیک
-- ✋ حرکت دست: جابه‌جا کردن جسم انتخاب‌شده
-- 👐 دو دست: چرخاندن و تغییر اندازه جسم
-- دکمه‌ها: انتخاب شکل Cube / Sphere / Torus و پاک کردن صحنه
+- پینچ دست راست، یعنی نزدیک کردن شست و اشاره: ساخت/گرفتن جسم
+- حرکت دست: جابه‌جایی جسم انتخاب‌شده
+- دو دست با هم: Scale و Rotate جسم
+- Space: تغییر شکل
+- Backspace/Delete: حذف جسم انتخاب‌شده
+- Clear: حذف همه اجسام
 
-## نکته مهم
+## اگر دوربین کار نکرد
 
-وب‌کم در مرورگر فقط روی `localhost` یا `https` درست کار می‌کند. اگر فایل HTML را مستقیم باز کنی ممکن است دوربین فعال نشود.
-
-
-## اگر خطای `styleText` گرفتی
-این خطا معمولاً وقتی پیش می‌آید که Vite نسخه‌ی خیلی جدید نصب شده باشد. این پروژه Vite را روی نسخه‌ی سازگار با Node 20.11.1 پین کرده است. اگر قبلاً نصب کرده‌ای، این دستورها را بزن:
-
-```bash
-rm -rf node_modules package-lock.json
-npm install
-npm run dev
-```
-
-یا Node را به نسخه‌ی جدیدتر آپدیت کن.
-# hand3d
+1. سایت باید روی `https` یا `localhost` باشد.
+2. Permission دوربین در مرورگر باید Allow باشد.
+3. روی Chrome تست کن.
+4. اگر AdBlock یا Privacy Extension داری، موقتاً خاموش کن چون ممکن است فایل مدل MediaPipe را بلاک کند.

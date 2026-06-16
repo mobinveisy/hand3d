@@ -1,260 +1,310 @@
-import './style.css';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
-const canvas = document.querySelector('#three-canvas');
 const video = document.querySelector('#webcam');
+const canvas = document.querySelector('#three');
 const statusEl = document.querySelector('#status');
+const meterFill = document.querySelector('#meterFill');
+const shapeBtn = document.querySelector('#shapeBtn');
+const clearBtn = document.querySelector('#clearBtn');
+const cameraBtn = document.querySelector('#cameraBtn');
 
-let shapeMode = 'box';
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+
+let handLandmarker;
+let running = false;
+let lastVideoTime = -1;
 let selected = null;
-let isPinching = false;
-let lastSpawn = 0;
-let previousTwoHandDistance = null;
-let previousTwoHandAngle = null;
+let lastPinch = false;
+let shapeIndex = 0;
+let twoHandStartDistance = null;
+let selectedStartScale = 1;
+let selectedStartRotation = 0;
 
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x050816, 8, 30);
-
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
-camera.position.set(0, 2.3, 8);
-
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.enablePan = false;
-controls.maxDistance = 18;
-controls.minDistance = 4;
-
-const ambient = new THREE.HemisphereLight(0xffffff, 0x1b1740, 2.2);
-scene.add(ambient);
-
-const key = new THREE.DirectionalLight(0xffffff, 3.5);
-key.position.set(4, 7, 5);
-key.castShadow = true;
-scene.add(key);
-
-const rim = new THREE.PointLight(0x7c3aed, 22, 18);
-rim.position.set(-4, 2, -3);
-scene.add(rim);
-
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(28, 28),
-  new THREE.MeshStandardMaterial({ color: 0x080b22, roughness: 0.65, metalness: 0.15 })
-);
-floor.rotation.x = -Math.PI / 2;
-floor.position.y = -2;
-floor.receiveShadow = true;
-scene.add(floor);
-
-const grid = new THREE.GridHelper(28, 28, 0x3b82f6, 0x1e293b);
-grid.position.y = -1.98;
-scene.add(grid);
-
-const particles = new THREE.Points(
-  new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(Array.from({ length: 900 }, () => (Math.random() - 0.5) * 26), 3)),
-  new THREE.PointsMaterial({ size: 0.025, color: 0x9fd3ff, transparent: true, opacity: 0.65 })
-);
-scene.add(particles);
-
+const shapes = ['Box', 'Sphere', 'Torus', 'Cone', 'Octa'];
 const objects = [];
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
-function createMaterial() {
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x07111f, 0.035);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 1.2, 6);
+
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+scene.add(new THREE.HemisphereLight(0xddeeff, 0x221144, 2.1));
+const key = new THREE.DirectionalLight(0xffffff, 3.2);
+key.position.set(4, 8, 6);
+key.castShadow = true;
+scene.add(key);
+const rim = new THREE.PointLight(0x9b5cff, 18, 16);
+rim.position.set(-4, 2, 3);
+scene.add(rim);
+
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(18, 18),
+  new THREE.MeshStandardMaterial({ color: 0x111827, roughness: .8, metalness: .15, transparent: true, opacity: .45 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -2.15;
+floor.receiveShadow = true;
+scene.add(floor);
+
+const grid = new THREE.GridHelper(18, 36, 0x7c3aed, 0x334155);
+grid.position.y = -2.13;
+scene.add(grid);
+
+const handCursor = new THREE.Mesh(
+  new THREE.SphereGeometry(.07, 24, 24),
+  new THREE.MeshStandardMaterial({ color: 0x7df9ff, emissive: 0x3ad9ff, emissiveIntensity: 1.3 })
+);
+scene.add(handCursor);
+
+function setStatus(msg, error = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle('error', error);
+}
+
+function makeMaterial() {
   const hue = Math.random();
-  const color = new THREE.Color().setHSL(hue, 0.85, 0.56);
+  const color = new THREE.Color().setHSL(hue, .82, .58);
   return new THREE.MeshPhysicalMaterial({
     color,
-    roughness: 0.18,
-    metalness: 0.45,
-    clearcoat: 0.9,
-    clearcoatRoughness: 0.18,
-    emissive: color.clone().multiplyScalar(0.12)
+    metalness: .35,
+    roughness: .22,
+    clearcoat: .8,
+    clearcoatRoughness: .18,
+    transmission: .08,
+    emissive: color.clone().multiplyScalar(.15)
   });
 }
 
-function createGeometry() {
-  if (shapeMode === 'sphere') return new THREE.IcosahedronGeometry(0.55, 2);
-  if (shapeMode === 'torus') return new THREE.TorusKnotGeometry(0.43, 0.15, 100, 16);
-  return new THREE.BoxGeometry(0.85, 0.85, 0.85, 6, 6, 6);
+function makeGeometry() {
+  switch (shapes[shapeIndex]) {
+    case 'Sphere': return new THREE.SphereGeometry(.48, 48, 32);
+    case 'Torus': return new THREE.TorusGeometry(.42, .15, 24, 72);
+    case 'Cone': return new THREE.ConeGeometry(.48, .9, 48);
+    case 'Octa': return new THREE.OctahedronGeometry(.55, 1);
+    default: return new THREE.BoxGeometry(.8, .8, .8, 3, 3, 3);
+  }
 }
 
-function spawnObject(position) {
-  const mesh = new THREE.Mesh(createGeometry(), createMaterial());
-  mesh.position.copy(position);
-  mesh.rotation.set(Math.random(), Math.random(), Math.random());
+function createObject(pos) {
+  const mesh = new THREE.Mesh(makeGeometry(), makeMaterial());
+  mesh.position.copy(pos);
+  mesh.rotation.set(Math.random() * .6, Math.random() * .6, Math.random() * .6);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  mesh.userData.floatSeed = Math.random() * 1000;
+  mesh.userData.velocity = new THREE.Vector3((Math.random() - .5) * .015, .015, 0);
   scene.add(mesh);
   objects.push(mesh);
   selected = mesh;
   pulse(mesh);
+  return mesh;
 }
 
 function pulse(mesh) {
-  mesh.scale.setScalar(0.05);
-  mesh.userData.targetScale = 1;
+  mesh.userData.pulse = 1;
 }
 
-function handToWorld(landmark) {
-  const x = (1 - landmark.x) * 2 - 1; // mirror webcam
-  const y = -(landmark.y * 2 - 1);
-  const vec = new THREE.Vector3(x, y, 0.45).unproject(camera);
-  const dir = vec.sub(camera.position).normalize();
+function screenToWorld(x, y, z = 0.42) {
+  pointer.x = (1 - x) * 2 - 1; // mirror camera
+  pointer.y = -(y * 2 - 1);
+  const vector = new THREE.Vector3(pointer.x, pointer.y, z).unproject(camera);
+  const dir = vector.sub(camera.position).normalize();
   const distance = (0 - camera.position.z) / dir.z;
   return camera.position.clone().add(dir.multiplyScalar(distance));
 }
 
-function pinchDistance(hand) {
+function pinchAmount(hand) {
   const thumb = hand[4];
   const index = hand[8];
   return Math.hypot(thumb.x - index.x, thumb.y - index.y, thumb.z - index.z);
 }
 
-function selectNearest(pos) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const obj of objects) {
-    const d = obj.position.distanceTo(pos);
-    if (d < bestDist && d < 1.15) {
-      best = obj;
-      bestDist = d;
-    }
-  }
-  return best;
+function palmOpenAmount(hand) {
+  const wrist = hand[0];
+  const tips = [8, 12, 16, 20].map(i => hand[i]);
+  return tips.reduce((sum, p) => sum + Math.hypot(p.x - wrist.x, p.y - wrist.y), 0) / tips.length;
 }
 
-function setMode(mode) {
-  shapeMode = mode;
-  document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-  document.querySelector(`#shape${mode[0].toUpperCase()}${mode.slice(1)}`)?.classList.add('active');
+function pickObject(worldPos) {
+  raycaster.set(camera.position, worldPos.clone().sub(camera.position).normalize());
+  const hits = raycaster.intersectObjects(objects, false);
+  return hits[0]?.object || null;
 }
 
-document.querySelector('#shapeBox').onclick = () => setMode('box');
-document.querySelector('#shapeSphere').onclick = () => setMode('sphere');
-document.querySelector('#shapeTorus').onclick = () => setMode('torus');
-document.querySelector('#clearScene').onclick = () => {
-  for (const obj of objects) scene.remove(obj);
-  objects.length = 0;
-  selected = null;
-};
-setMode('box');
-
-async function setupCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
-  video.srcObject = stream;
-  await video.play();
-}
-
-async function setupHands() {
-  const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm');
+async function createHandLandmarker(delegate = 'GPU') {
+  const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   return HandLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-      delegate: 'GPU'
-    },
+    baseOptions: { modelAssetPath: MODEL_URL, delegate },
     runningMode: 'VIDEO',
     numHands: 2,
-    minHandDetectionConfidence: 0.55,
-    minHandPresenceConfidence: 0.55,
-    minTrackingConfidence: 0.55
+    minHandDetectionConfidence: .55,
+    minHandPresenceConfidence: .55,
+    minTrackingConfidence: .5
   });
 }
 
-let handLandmarker;
-let lastVideoTime = -1;
-
-async function init() {
+async function initModel() {
+  setStatus('در حال لود مدل تشخیص دست...');
   try {
-    await setupCamera();
-    handLandmarker = await setupHands();
-    statusEl.textContent = 'آماده است. دستت را جلوی دوربین بگیر.';
-    detectLoop();
+    handLandmarker = await createHandLandmarker('GPU');
+  } catch (gpuError) {
+    console.warn('GPU delegate failed, falling back to CPU', gpuError);
+    handLandmarker = await createHandLandmarker('CPU');
+  }
+}
+
+async function startCamera() {
+  try {
+    if (!window.isSecureContext) {
+      throw new Error('صفحه Secure نیست. باید با HTTPS یا localhost اجرا شود.');
+    }
+    setStatus('در حال گرفتن دسترسی دوربین...');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    running = true;
+    setStatus('آماده است. دستت را جلوی دوربین بگیر 👌');
+    requestAnimationFrame(loop);
   } catch (err) {
     console.error(err);
-    statusEl.textContent = 'دسترسی دوربین یا مدل تشخیص دست مشکل دارد. پروژه را با https یا localhost اجرا کن.';
+    setStatus(`مشکل دوربین: ${err.message || err.name}. در Netlify حتماً آدرس https باشد و Permission دوربین را Allow کن.`, true);
   }
 }
 
-function detectLoop() {
-  if (video.currentTime !== lastVideoTime && handLandmarker) {
-    lastVideoTime = video.currentTime;
-    const result = handLandmarker.detectForVideo(video, performance.now());
-    handleHands(result.landmarks || []);
+async function boot() {
+  try {
+    await initModel();
+    await startCamera();
+  } catch (err) {
+    console.error(err);
+    setStatus(`مدل تشخیص دست لود نشد: ${err.message || err.name}. اینترنت/CDN یا AdBlock را چک کن.`, true);
   }
-  requestAnimationFrame(detectLoop);
 }
 
-function handleHands(hands) {
+function handleHands(results) {
+  const hands = results.landmarks || [];
+  meterFill.style.width = `${Math.min(100, hands.length * 50)}%`;
   if (!hands.length) {
-    isPinching = false;
-    previousTwoHandDistance = null;
-    previousTwoHandAngle = null;
+    setStatus('دستی دیده نمی‌شود. دستت را داخل کادر بگیر.');
+    lastPinch = false;
+    twoHandStartDistance = null;
     return;
   }
 
-  const first = hands[0];
-  const indexTip = first[8];
-  const worldPos = handToWorld(indexTip);
-  const pinchingNow = pinchDistance(first) < 0.055;
+  const hand = hands[0];
+  const indexTip = hand[8];
+  const world = screenToWorld(indexTip.x, indexTip.y);
+  handCursor.position.lerp(world, .45);
 
-  if (pinchingNow) {
-    const now = performance.now();
-    if (!isPinching) {
-      selected = selectNearest(worldPos);
-      if (!selected && now - lastSpawn > 420) {
-        spawnObject(worldPos);
-        lastSpawn = now;
-      }
-    }
-    if (selected) {
-      selected.position.lerp(worldPos, 0.32);
-      selected.rotation.x += 0.025;
-      selected.rotation.y += 0.035;
-    }
+  const pinch = pinchAmount(hand) < .045;
+  const open = palmOpenAmount(hand) > .31;
+
+  if (pinch && !lastPinch) {
+    selected = pickObject(world) || createObject(world);
+    pulse(selected);
   }
-  isPinching = pinchingNow;
+
+  if (pinch && selected) {
+    selected.position.lerp(world, .35);
+    selected.userData.velocity.set(0, 0, 0);
+    selected.rotation.y += .035;
+    selected.rotation.x += .018;
+    setStatus(`گرفتی: ${shapes[shapeIndex]} | با حرکت دست جابه‌جا کن`);
+  } else if (open) {
+    setStatus('کف دست باز: آماده ساخت جسم جدید با پینچ');
+  }
+  lastPinch = pinch;
 
   if (hands.length >= 2 && selected) {
-    const p1 = handToWorld(hands[0][8]);
-    const p2 = handToWorld(hands[1][8]);
-    const dist = p1.distanceTo(p2);
-    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-    selected.position.lerp(p1.clone().add(p2).multiplyScalar(0.5), 0.22);
-    if (previousTwoHandDistance) {
-      const scaleFactor = THREE.MathUtils.clamp(dist / previousTwoHandDistance, 0.94, 1.06);
-      selected.scale.multiplyScalar(scaleFactor);
-      selected.scale.clampScalar(0.25, 3.5);
+    const a = screenToWorld(hands[0][8].x, hands[0][8].y);
+    const b = screenToWorld(hands[1][8].x, hands[1][8].y);
+    const dist = a.distanceTo(b);
+    const angle = Math.atan2(b.y - a.y, b.x - a.x);
+    if (!twoHandStartDistance) {
+      twoHandStartDistance = dist;
+      selectedStartScale = selected.scale.x;
+      selectedStartRotation = selected.rotation.z - angle;
+    } else {
+      const scale = THREE.MathUtils.clamp(selectedStartScale * (dist / twoHandStartDistance), .35, 3.5);
+      selected.scale.setScalar(scale);
+      selected.rotation.z = selectedStartRotation + angle;
+      setStatus('دو دست: Scale و Rotate فعال است');
     }
-    if (previousTwoHandAngle !== null) selected.rotation.z += angle - previousTwoHandAngle;
-    previousTwoHandDistance = dist;
-    previousTwoHandAngle = angle;
   } else {
-    previousTwoHandDistance = null;
-    previousTwoHandAngle = null;
+    twoHandStartDistance = null;
   }
 }
 
-function animate(time) {
-  requestAnimationFrame(animate);
-  controls.update();
-  particles.rotation.y += 0.0008;
-  for (const obj of objects) {
-    if (obj.userData.targetScale && obj.scale.x < obj.userData.targetScale) {
-      obj.scale.lerp(new THREE.Vector3(1, 1, 1), 0.18);
-    }
-    obj.position.y += Math.sin(time * 0.0018 + obj.userData.floatSeed) * 0.0015;
+function loop(now) {
+  if (running && handLandmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const results = handLandmarker.detectForVideo(video, now);
+    handleHands(results);
   }
-  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
 }
+
+function animate() {
+  const t = performance.now() * .001;
+  rim.position.x = Math.sin(t * .7) * 4;
+  rim.position.z = Math.cos(t * .6) * 4;
+
+  for (const obj of objects) {
+    if (obj !== selected) {
+      obj.rotation.x += .004;
+      obj.rotation.y += .007;
+      obj.position.add(obj.userData.velocity);
+      obj.userData.velocity.y -= .00055;
+      if (obj.position.y < -1.65) {
+        obj.position.y = -1.65;
+        obj.userData.velocity.y *= -.48;
+      }
+    }
+    if (obj.userData.pulse) {
+      obj.userData.pulse *= .88;
+      const s = 1 + obj.userData.pulse * .18;
+      obj.scale.lerp(new THREE.Vector3(s, s, s), .25);
+      if (obj.userData.pulse < .02) obj.userData.pulse = 0;
+    }
+  }
+  handCursor.material.emissiveIntensity = 1.1 + Math.sin(t * 8) * .35;
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+
+shapeBtn.addEventListener('click', () => {
+  shapeIndex = (shapeIndex + 1) % shapes.length;
+  shapeBtn.textContent = `Shape: ${shapes[shapeIndex]}`;
+});
+clearBtn.addEventListener('click', () => {
+  for (const obj of objects.splice(0)) scene.remove(obj);
+  selected = null;
+});
+cameraBtn.addEventListener('click', startCamera);
+
+addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    shapeIndex = (shapeIndex + 1) % shapes.length;
+    shapeBtn.textContent = `Shape: ${shapes[shapeIndex]}`;
+  }
+  if ((e.code === 'Backspace' || e.code === 'Delete') && selected) {
+    scene.remove(selected);
+    const i = objects.indexOf(selected);
+    if (i >= 0) objects.splice(i, 1);
+    selected = null;
+  }
+});
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -262,5 +312,5 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-init();
 animate();
+boot();

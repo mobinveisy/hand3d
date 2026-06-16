@@ -3,24 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hand Three.js Studio</title>
+    <title>Mobin Hand 3D Studio</title>
   </head>
   <body>
     <video id="webcam" autoplay playsinline muted></video>
-    <canvas id="three-canvas"></canvas>
+    <canvas id="three"></canvas>
 
     <main class="hud">
-      <h1>Hand 3D Studio</h1>
-      <p>🤏 پینچ با انگشت شست و اشاره: ساخت / گرفتن جسم</p>
-      <p>✋ حرکت دست: جابه‌جایی جسم انتخاب‌شده</p>
-      <p>👐 دو دست: چرخش و بزرگ‌/کوچک کردن</p>
-      <div class="buttons">
-        <button id="shapeBox">Cube</button>
-        <button id="shapeSphere">Sphere</button>
-        <button id="shapeTorus">Torus</button>
-        <button id="clearScene">Clear</button>
-      </div>
-      <small id="status">در حال آماده‌سازی دوربین...</small>
+      <section class="panel glass">
+        <div class="brand">✋ Mobin Hand 3D Studio</div>
+        <div id="status" class="status">در حال آماده‌سازی...</div>
+        <div class="meter"><span id="meterFill"></span></div>
+        <div class="tips">
+          <b>ژست‌ها</b>
+          <p>👌 پینچ با دست راست: ساخت و گرفتن جسم</p>
+          <p>✋ حرکت دست: جابه‌جایی جسم انتخاب‌شده</p>
+          <p>دو دست باز/بسته: بزرگ‌کوچک کردن و چرخاندن</p>
+          <p>کلید Space: تغییر شکل | Backspace: حذف</p>
+        </div>
+      </section>
+      <section class="toolbar glass">
+        <button id="shapeBtn">Shape: Box</button>
+        <button id="clearBtn">Clear</button>
+        <button id="cameraBtn">Start Camera</button>
+      </section>
     </main>
 
     <script type="module" src="/src/main.js"></script>
